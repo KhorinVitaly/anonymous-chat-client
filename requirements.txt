@@ -1,0 +1,2 @@
+ConfigArgParse == 1.0
+python-dotenv==0.9.1
