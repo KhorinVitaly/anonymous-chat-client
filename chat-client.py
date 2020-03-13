@@ -4,6 +4,8 @@ import datetime
 import configargparse
 import json
 import logging
+import aionursery
+import contextlib
 from aiofile import AIOFile
 from dotenv import load_dotenv
 from tkinter import messagebox
@@ -22,13 +24,24 @@ class InvalidToken(Exception):
 
 
 async def main(args):
+    QueuesCollection = namedtuple('QueuesCollection', [
+        'messages_queue',
+        'sending_queue',
+        'status_updates_queue',
+        'history_queue',
+        'watchdog_queue',
+    ])
+    queues = QueuesCollection(
+        asyncio.Queue(),
+        asyncio.Queue(),
+        asyncio.Queue(),
+        asyncio.Queue(),
+        asyncio.Queue()
+    )
     try:
-        messages_queue = asyncio.Queue()
-        sending_queue = asyncio.Queue()
-        status_updates_queue = asyncio.Queue()
         await asyncio.gather(
-            gui.draw(messages_queue, sending_queue, status_updates_queue),
-            handle_connection(args, messages_queue, sending_queue, status_updates_queue)
+            gui.draw(queues.messages_queue, queues.sending_queue, queues.status_updates_queue),
+            handle_connection(args, queues)
         )
     except gui.TkAppClosed:
         pass
@@ -38,23 +51,44 @@ async def main(args):
         pass
 
 
-async def handle_connection(args, messages_queue, sending_queue, status_updates_queue):
-    history_queue = asyncio.Queue()
-    watchdog_queue = asyncio.Queue()
+async def handle_connection(args, queues):
+    while True:
+        queues.status_updates_queue.put_nowait(gui.ReadConnectionStateChanged.INITIATED)
+        connection_for_read = await open_connection(args.host, args.read_port)
+        queues.status_updates_queue.put_nowait(gui.ReadConnectionStateChanged.ESTABLISHED)
 
-    connection_for_read = await open_connection(args.host, args.read_port)
-    status_updates_queue.put_nowait(gui.ReadConnectionStateChanged.ESTABLISHED)
+        queues.status_updates_queue.put_nowait(gui.SendingConnectionStateChanged.INITIATED)
+        connection_for_send = await open_connection(args.host, args.send_port)
+        queues.status_updates_queue.put_nowait(gui.SendingConnectionStateChanged.ESTABLISHED)
+        await authorise(connection_for_send, args.token, queues)
 
-    connection_for_send = await open_connection(args.host, args.send_port)
-    await authorise(connection_for_send, args.token, status_updates_queue, watchdog_queue)
-    status_updates_queue.put_nowait(gui.SendingConnectionStateChanged.ESTABLISHED)
+        try:
+            await start_coroutine(args, queues, connection_for_read, connection_for_send)
+        except asyncio.TimeoutError:
+            queues.watchdog_queue.put_nowait(f'[{datetime.datetime.now().timestamp()}] 1s timeout is elapsed')
+            queues.status_updates_queue.put_nowait(gui.ReadConnectionStateChanged.CLOSED)
+            queues.status_updates_queue.put_nowait(gui.SendingConnectionStateChanged.CLOSED)
+            connection_for_read.writer.close()
+            connection_for_send.writer.close()
 
-    await asyncio.gather(
-        read_msgs(messages_queue, history_queue, watchdog_queue, connection_for_read.reader),
-        save_msgs(args.history, history_queue),
-        send_msgs(sending_queue, watchdog_queue, connection_for_send.writer),
-        watch_for_connection(watchdog_queue),
-    )
+
+@contextlib.asynccontextmanager
+async def create_handy_nursery():
+    try:
+        async with aionursery.Nursery() as nursery:
+            yield nursery
+    except aionursery.MultiError as e:
+        if len(e.exceptions) == 1:
+            raise e.exceptions[0] from None
+        raise
+
+
+async def start_coroutine(args, queues, connection_for_read, connection_for_send):
+    async with create_handy_nursery() as nursery:
+        nursery.start_soon(read_msgs(queues, connection_for_read))
+        nursery.start_soon(save_msgs(args.history, queues))
+        nursery.start_soon(send_msgs(queues, connection_for_send))
+        nursery.start_soon(watch_for_connection(queues))
 
 
 async def open_connection(host, port):
@@ -63,37 +97,35 @@ async def open_connection(host, port):
     return Connection(reader, writer)
 
 
-async def watch_for_connection(watchdog_queue):
+async def watch_for_connection(queues):
     while True:
-        async with timeout(1) as cm:
-            item = await watchdog_queue.get()
+        async with timeout(1):
+            item = await queues.watchdog_queue.get()
             logging.debug(item)
-        if cm.expired:
-            watchdog_queue.put_nowait(f'[{datetime.datetime.now().timestamp()}] 1s timeout is elapsed')
 
 
-async def read_msgs(messages_queue, history_queue, watchdog_queue, reader):
+async def read_msgs(queues, connection):
     while True:
-        message = await readline(reader, watchdog_queue, 'New message in chat')
+        message = await readline(connection.reader, queues.watchdog_queue, 'New message in chat')
         if not message:
             continue
         str_datetime = datetime.datetime.now().strftime("%d %m %Y %H:%M:%S")
         message = f'[{str_datetime}] {message}'
-        messages_queue.put_nowait(message)
-        history_queue.put_nowait(message)
+        queues.messages_queue.put_nowait(message)
+        queues.history_queue.put_nowait(message)
 
 
-async def save_msgs(filepath, history_queue):
+async def save_msgs(filepath, queues):
     while True:
-        message = await history_queue.get()
+        message = await queues.history_queue.get()
         async with AIOFile(filepath, 'a') as afp:
             await afp.write(message)
 
 
-async def send_msgs(sending_queue, watchdog_queue, writer):
+async def send_msgs(queues, connection):
     while True:
-        message = await sending_queue.get()
-        await submit_message(writer, watchdog_queue, 'Message sent', message)
+        message = await queues.sending_queue.get()
+        await submit_message(connection.writer, queues.watchdog_queue, 'Message sent', message)
 
 
 async def submit_message(writer,  watchdog_queue, description, text=''):
@@ -118,16 +150,16 @@ async def readline(reader, watchdog_queue, description):
     return text
 
 
-async def authorise(connection, token, status_updates_queue, watchdog_queue):
-    await readline(connection.reader, watchdog_queue, 'Prompt before auth')
-    await submit_message(connection.writer, watchdog_queue, 'Authorization token sent', token)
-    text = await readline(connection.reader, watchdog_queue, 'Authorization done')
+async def authorise(connection, token, queues):
+    await readline(connection.reader, queues.watchdog_queue, 'Prompt before auth')
+    await submit_message(connection.writer, queues.watchdog_queue, 'Authorization token sent', token)
+    text = await readline(connection.reader, queues.watchdog_queue, 'Authorization done')
     json_data = json.loads(text)
     if not json_data:
         raise InvalidToken
     nickname = json_data['nickname']
     event = gui.NicknameReceived(nickname)
-    status_updates_queue.put_nowait(event)
+    queues.status_updates_queue.put_nowait(event)
 
 
 if __name__ == '__main__':
