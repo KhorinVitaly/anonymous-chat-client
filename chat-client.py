@@ -23,7 +23,7 @@ class InvalidToken(Exception):
     pass
 
 
-async def main(args):
+async def create_queues():
     QueuesCollection = namedtuple('QueuesCollection', [
         'messages_queue',
         'sending_queue',
@@ -31,45 +31,13 @@ async def main(args):
         'history_queue',
         'watchdog_queue',
     ])
-    queues = QueuesCollection(
+    return QueuesCollection(
         asyncio.Queue(),
         asyncio.Queue(),
         asyncio.Queue(),
         asyncio.Queue(),
         asyncio.Queue()
     )
-    try:
-        await asyncio.gather(
-            gui.draw(queues.messages_queue, queues.sending_queue, queues.status_updates_queue),
-            handle_connection(args, queues)
-        )
-    except gui.TkAppClosed:
-        pass
-    except InvalidToken:
-        messagebox.showerror("Не известный токен", "Проверьте токен, сервер его не узнал")
-    except KeyboardInterrupt:
-        pass
-
-
-async def handle_connection(args, queues):
-    while True:
-        queues.status_updates_queue.put_nowait(gui.ReadConnectionStateChanged.INITIATED)
-        connection_for_read = await open_connection(args.host, args.read_port)
-        queues.status_updates_queue.put_nowait(gui.ReadConnectionStateChanged.ESTABLISHED)
-
-        queues.status_updates_queue.put_nowait(gui.SendingConnectionStateChanged.INITIATED)
-        connection_for_send = await open_connection(args.host, args.send_port)
-        queues.status_updates_queue.put_nowait(gui.SendingConnectionStateChanged.ESTABLISHED)
-        await authorise(connection_for_send, args.token, queues)
-
-        try:
-            await start_coroutine(args, queues, connection_for_read, connection_for_send)
-        except asyncio.TimeoutError:
-            queues.watchdog_queue.put_nowait(f'[{datetime.datetime.now().timestamp()}] 1s timeout is elapsed')
-            queues.status_updates_queue.put_nowait(gui.ReadConnectionStateChanged.CLOSED)
-            queues.status_updates_queue.put_nowait(gui.SendingConnectionStateChanged.CLOSED)
-            connection_for_read.writer.close()
-            connection_for_send.writer.close()
 
 
 @contextlib.asynccontextmanager
@@ -83,7 +51,46 @@ async def create_handy_nursery():
         raise
 
 
-async def start_coroutine(args, queues, connection_for_read, connection_for_send):
+async def main(args):
+    queues = await create_queues()
+    try:
+        async with create_handy_nursery() as nursery:
+            nursery.start_soon(gui.draw(queues.messages_queue, queues.sending_queue, queues.status_updates_queue))
+            nursery.start_soon(handle_connection(args, queues))
+    except InvalidToken:
+        messagebox.showerror("Не известный токен", "Проверьте токен, сервер его не узнал")
+    except gui.TkAppClosed:
+        pass
+    except KeyboardInterrupt:
+        pass
+
+
+async def handle_connection(args, queues):
+    pause = 0
+    while True:
+        queues.status_updates_queue.put_nowait(gui.ReadConnectionStateChanged.INITIATED)
+        queues.status_updates_queue.put_nowait(gui.SendingConnectionStateChanged.INITIATED)
+        await asyncio.sleep(pause)
+
+        connection_for_read = await open_connection(args.host, args.read_port)
+        queues.status_updates_queue.put_nowait(gui.ReadConnectionStateChanged.ESTABLISHED)
+
+        connection_for_send = await open_connection(args.host, args.send_port)
+        queues.status_updates_queue.put_nowait(gui.SendingConnectionStateChanged.ESTABLISHED)
+        await authorise(connection_for_send, args.token, queues)
+
+        try:
+            await create_interaction_tasks(args, queues, connection_for_read, connection_for_send)
+        except asyncio.TimeoutError:
+            queues.watchdog_queue.put_nowait(f'[{datetime.datetime.now().timestamp()}] 1s timeout is elapsed')
+            queues.status_updates_queue.put_nowait(gui.ReadConnectionStateChanged.CLOSED)
+            queues.status_updates_queue.put_nowait(gui.SendingConnectionStateChanged.CLOSED)
+            connection_for_read.writer.close()
+            connection_for_send.writer.close()
+            pause = 3
+
+
+async def create_interaction_tasks(args, queues, connection_for_read, connection_for_send):
     async with create_handy_nursery() as nursery:
         nursery.start_soon(read_msgs(queues, connection_for_read))
         nursery.start_soon(save_msgs(args.history, queues))
