@@ -81,7 +81,7 @@ async def handle_connection(args, queues):
 
         try:
             await create_interaction_tasks(args, queues, connection_for_read, connection_for_send)
-        except asyncio.TimeoutError:
+        except ConnectionError:
             queues.watchdog_queue.put_nowait(f'[{datetime.datetime.now().timestamp()}] 1s timeout is elapsed')
             queues.status_updates_queue.put_nowait(gui.ReadConnectionStateChanged.CLOSED)
             queues.status_updates_queue.put_nowait(gui.SendingConnectionStateChanged.CLOSED)
@@ -95,7 +95,8 @@ async def create_interaction_tasks(args, queues, connection_for_read, connection
         nursery.start_soon(read_msgs(queues, connection_for_read))
         nursery.start_soon(save_msgs(args.history, queues))
         nursery.start_soon(send_msgs(queues, connection_for_send))
-        nursery.start_soon(watch_for_connection(queues))
+        nursery.start_soon(watch_for_connection(queues.watchdog_queue))
+        nursery.start_soon(keep_in_touch(connection_for_send, queues.watchdog_queue))
 
 
 async def open_connection(host, port):
@@ -104,11 +105,26 @@ async def open_connection(host, port):
     return Connection(reader, writer)
 
 
-async def watch_for_connection(queues):
+async def watch_for_connection(watchdog_queue):
     while True:
-        async with timeout(1):
-            item = await queues.watchdog_queue.get()
-            logging.debug(item)
+        try:
+            async with timeout(1) as cm:
+                item = await watchdog_queue.get()
+                logging.debug(item)
+        except asyncio.TimeoutError:
+            if cm.expired:
+                raise ConnectionError
+
+
+async def keep_in_touch(connection, watchdog_queue):
+    while True:
+        try:
+            async with timeout(1) as cm:
+                await submit_message(connection.writer, watchdog_queue, 'ping-pong')
+        except asyncio.TimeoutError:
+            if cm.expired:
+                raise ConnectionError
+        await asyncio.sleep(0.5)
 
 
 async def read_msgs(queues, connection):
