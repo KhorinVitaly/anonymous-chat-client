@@ -66,37 +66,27 @@ async def main(args):
 
 
 async def handle_connection(args, queues):
-    pause = 0
     while True:
         queues.status_updates_queue.put_nowait(gui.ReadConnectionStateChanged.INITIATED)
         queues.status_updates_queue.put_nowait(gui.SendingConnectionStateChanged.INITIATED)
-        await asyncio.sleep(pause)
-
         connection_for_read = await open_connection(args.host, args.read_port)
-        queues.status_updates_queue.put_nowait(gui.ReadConnectionStateChanged.ESTABLISHED)
-
         connection_for_send = await open_connection(args.host, args.send_port)
+        queues.status_updates_queue.put_nowait(gui.ReadConnectionStateChanged.ESTABLISHED)
         queues.status_updates_queue.put_nowait(gui.SendingConnectionStateChanged.ESTABLISHED)
+
         await authorise(connection_for_send, args.token, queues)
 
         try:
-            await create_interaction_tasks(args, queues, connection_for_read, connection_for_send)
+            async with create_handy_nursery() as nursery:
+                nursery.start_soon(read_msgs(queues, connection_for_read))
+                nursery.start_soon(save_msgs(args.history, queues))
+                nursery.start_soon(send_msgs(queues, connection_for_send))
+                nursery.start_soon(watch_for_connection(queues.watchdog_queue))
         except ConnectionError:
-            queues.watchdog_queue.put_nowait(f'[{datetime.datetime.now().timestamp()}] 1s timeout is elapsed')
             queues.status_updates_queue.put_nowait(gui.ReadConnectionStateChanged.CLOSED)
             queues.status_updates_queue.put_nowait(gui.SendingConnectionStateChanged.CLOSED)
             connection_for_read.writer.close()
             connection_for_send.writer.close()
-            pause = 3
-
-
-async def create_interaction_tasks(args, queues, connection_for_read, connection_for_send):
-    async with create_handy_nursery() as nursery:
-        nursery.start_soon(read_msgs(queues, connection_for_read))
-        nursery.start_soon(save_msgs(args.history, queues))
-        nursery.start_soon(send_msgs(queues, connection_for_send))
-        nursery.start_soon(watch_for_connection(queues.watchdog_queue))
-        nursery.start_soon(keep_in_touch(connection_for_send, queues.watchdog_queue))
 
 
 async def open_connection(host, port):
@@ -113,18 +103,8 @@ async def watch_for_connection(watchdog_queue):
                 logging.debug(item)
         except asyncio.TimeoutError:
             if cm.expired:
+                logging.debug(f'[{datetime.datetime.now().timestamp()}] 1s timeout is elapsed')
                 raise ConnectionError
-
-
-async def keep_in_touch(connection, watchdog_queue):
-    while True:
-        try:
-            async with timeout(1) as cm:
-                await submit_message(connection.writer, watchdog_queue, 'ping-pong')
-        except asyncio.TimeoutError:
-            if cm.expired:
-                raise ConnectionError
-        await asyncio.sleep(0.5)
 
 
 async def read_msgs(queues, connection):
@@ -195,4 +175,3 @@ if __name__ == '__main__':
     args = parser.parse_args()
     logging.basicConfig(level=logging.DEBUG)
     asyncio.run(main(args))
-
