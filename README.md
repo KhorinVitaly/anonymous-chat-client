@@ -1,9 +1,9 @@
 # anonymous-chat-client
 
-Пример реализации взаидойствения с чатом на TCP сокетах с помощью Python и asyncio.
+Пример реализации взаимойствения с чатом на TCP сокетах с помощью Python и asyncio.
 
 Содержит скрипт chat_client.py для запуска чата в графическом инерфейсе и скрипт get_token.py
-для регистрации в чате и получения персоонального токена.
+для регистрации в чате и получения персонального токена.
 
 ## Как установить
 
@@ -32,32 +32,38 @@ python get_token.py
 
 При запуске скрипта chat_client.py вы можете указать следующие необязательные параметры:
 
-* --host - адрес сервера чата;
-* --read_port - соответственно порт для получения истории сообщений;
-* --send_port - соответственно порт для отправки сообщений;
-* --history - путь к файлу для логирования истории чата.
-* --token - персоональный hash токен необходимый для авторизации уже существующего пользователя;
+```bash
+--host - адрес сервера чата;
+--read_port - порт для получения истории сообщений;
+--send_port - порт для отправки сообщений;
+--history - путь к файлу для логирования истории чата.
+--token - персональный hash токен необходимый для авторизации уже существующего пользователя;
+```
 
 ```bash
 python listen_minechat.py --host minechat.dvmn.org --read_port 5000 --history ./chat_hystory.log
 ```
 
-Альтернативной явдяется установка переменных окружения:
+Альтернативной является установка переменных окружения:
 
-* MINECHAT_HOST
-* MINECHAT_READ_PORT
-* MINECHAT_SEND_PORT
-* MINECHAT_HISTORY
-* TOKEN
+```env
+MINECHAT_HOST
+MINECHAT_READ_PORT
+MINECHAT_SEND_PORT
+MINECHAT_HISTORY
+MINECHAT_TOKEN
+```
 
 ```bash
 export MINECHAT_HOST=minechat.dvmn.org && export MINECHAT_SEND_PORT=5000
 ```
 
-Также при запуске get_token доступны следующие параметры:
+Также при запуске get_token.py доступны следующие параметры:
 
-* --host - адрес сервера чата;
-* --send_port - соответственно порт для отправки сообщений;
+```bash
+--host - адрес сервера чата;
+--send_port - порт для отправки сообщений;
+```
 
 ```bash
 python get_token.py --host minechat.dvmn.org --send_port 5050
@@ -65,8 +71,10 @@ python get_token.py --host minechat.dvmn.org --send_port 5050
 
 Альтернативной также явдяется установка соответствующих переменных окружения:
 
-* MINECHAT_HOST
-* MINECHAT_SEND_PORT
+```env
+MINECHAT_HOST
+MINECHAT_SEND_PORT
+```
 
 ```bash
 export MINECHAT_HOST=minechat.dvmn.org && export MINECHAT_SEND_PORT=5050
@@ -79,9 +87,9 @@ MINECHAT_HOST=minechat.dvmn.org
 MINECHAT_READ_PORT=5000
 MINECHAT_SEND_PORT=5050
 MINECHAT_HISTORY=./chat.log
-TOKEN=5fvg.........
+MINECHAT_TOKEN=5fvg.........
 ```
 
 ## Цели проекта
 
-Код написан в учебных целях — это урок в курсе по Ассинхронному программированию на Python на сайте [Devman](https://dvmn.org)..
+Код написан в учебных целях — это урок в курсе по aсинхронному программированию на Python на сайте [Devman](https://dvmn.org)..

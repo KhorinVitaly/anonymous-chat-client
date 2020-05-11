@@ -15,9 +15,6 @@ from async_timeout import timeout
 from socket import gaierror
 
 
-load_dotenv()
-
-
 SPECIAL_SYMBOLS_FOR_MARKING_END_OF_MESSAGE = '\n\n'
 
 
@@ -75,6 +72,9 @@ async def handle_connection(args, messages_queue, sending_queue, status_updates_
         except ConnectionError:
             status_updates_queue.put_nowait(gui.ReadConnectionStateChanged.CLOSED)
             status_updates_queue.put_nowait(gui.SendingConnectionStateChanged.CLOSED)
+            connection_for_read.writer.close()
+            connection_for_send.writer.close()
+        finally:
             connection_for_read.writer.close()
             connection_for_send.writer.close()
 
@@ -172,12 +172,13 @@ async def authorise(connection, token, watchdog_queue, status_updates_queue):
 
 
 if __name__ == '__main__':
+    load_dotenv()
     parser = configargparse.ArgParser()
     parser.add('--host', help='Адрес сервера minechat', env_var='MINECHAT_HOST')
     parser.add('--read_port', help='Порт для получения сообщений чата', env_var='MINECHAT_READ_PORT')
     parser.add('--send_port', help='Порт для отправки сообщений чата', env_var='MINECHAT_SEND_PORT')
     parser.add('--history', help='Путь к фалу для логирования истории чата', env_var='MINECHAT_HISTORY')
-    parser.add('--token', help='Персоональный hash токен для авторизации', env_var='TOKEN')
+    parser.add('--token', help='Персональный hash токен для авторизации', env_var='MINECHAT_TOKEN')
     args = parser.parse_args()
     logging.basicConfig(level=logging.DEBUG)
     asyncio.run(main(args))

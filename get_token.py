@@ -16,7 +16,7 @@ async def get_token(token_label, args, username):
     try:
         json_data = json.loads(text)
         token = json_data['account_hash']
-        token_label['text'] = f'Ваш персоональный токен: {token}'
+        token_label['text'] = f'Ваш персональный токен: {token}'
     except ValueError:
         token_label['text'] = 'Что-то пошло не так попробуйте еще раз позже.'
 
@@ -56,6 +56,6 @@ def register(name_entry, token_label, args):
 if __name__ == '__main__':
     parser = configargparse.ArgParser()
     parser.add('--host', help='Адрес сервера minechat', env_var='MINECHAT_HOST')
-    parser.add('--send_port', help='Порт для отправки сообщений чата', env_var='MINECHAT_SEND_PORT')
+    parser.add('--send_port', help='Порт для отправки сообщений', env_var='MINECHAT_SEND_PORT')
     args = parser.parse_args()
     draw(args)
