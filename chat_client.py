@@ -53,39 +53,39 @@ async def handle_connection(args, messages_queue, sending_queue, status_updates_
     while True:
         history_queue = asyncio.Queue()
         watchdog_queue = asyncio.Queue()
+        state_enum = gui.SendingConnectionStateChanged
         try:
-            status_updates_queue.put_nowait(gui.ReadConnectionStateChanged.INITIATED)
-            status_updates_queue.put_nowait(gui.SendingConnectionStateChanged.INITIATED)
-            connection_for_read = await open_connection(args.host, args.read_port)
-            connection_for_send = await open_connection(args.host, args.send_port)
-            status_updates_queue.put_nowait(gui.ReadConnectionStateChanged.ESTABLISHED)
-            status_updates_queue.put_nowait(gui.SendingConnectionStateChanged.ESTABLISHED)
-
-            await authorise(connection_for_send, args.token, watchdog_queue, status_updates_queue)
-
-            async with anyio.create_task_group() as tg:
-                await tg.spawn(read_msgs, connection_for_read, watchdog_queue, messages_queue, history_queue)
-                await tg.spawn(save_msgs, args.history, history_queue)
-                await tg.spawn(send_msgs, connection_for_send, sending_queue, watchdog_queue)
-                await tg.spawn(watch_for_connection, watchdog_queue)
-                await tg.spawn(keep_in_touch, connection_for_send, watchdog_queue)
+            async with open_connection(args.host, args.send_port, status_updates_queue, state_enum) as connection:
+                await authorise(connection, args.token, watchdog_queue, status_updates_queue)
+                async with anyio.create_task_group() as tg:
+                    await tg.spawn(read_msgs, args, watchdog_queue, messages_queue, history_queue, status_updates_queue)
+                    await tg.spawn(save_msgs, args.history, history_queue)
+                    await tg.spawn(send_msgs, connection, sending_queue, watchdog_queue)
+                    await tg.spawn(watch_for_connection, watchdog_queue)
+                    await tg.spawn(keep_in_touch, connection, watchdog_queue)
         except ConnectionError:
-            status_updates_queue.put_nowait(gui.ReadConnectionStateChanged.CLOSED)
-            status_updates_queue.put_nowait(gui.SendingConnectionStateChanged.CLOSED)
-            connection_for_read.writer.close()
-            connection_for_send.writer.close()
-        finally:
-            connection_for_read.writer.close()
-            connection_for_send.writer.close()
+            pass
 
 
-async def open_connection(host, port):
+@contextlib.asynccontextmanager
+async def open_connection(host, port, status_updates_queue=None, state_enum=None):
+    is_opened = False
+    if status_updates_queue and state_enum:
+        status_updates_queue.put_nowait(state_enum.INITIATED)
     Connection = namedtuple('Connection', 'reader writer')
     try:
         reader, writer = await asyncio.open_connection(host, port)
+        if status_updates_queue and state_enum:
+            status_updates_queue.put_nowait(state_enum.ESTABLISHED)
+        is_opened = True
+        yield Connection(reader, writer)
     except gaierror:
         raise ConnectionError
-    return Connection(reader, writer)
+    finally:
+        if is_opened:
+            writer.close()
+        if status_updates_queue and state_enum:
+            status_updates_queue.put_nowait(state_enum.CLOSED)
 
 
 async def watch_for_connection(watchdog_queue):
@@ -111,15 +111,17 @@ async def keep_in_touch(connection, watchdog_queue):
         await anyio.sleep(pause)
 
 
-async def read_msgs(connection, watchdog_queue, messages_queue, history_queue):
-    while True:
-        message = await readline(connection.reader, watchdog_queue, 'New message in chat')
-        if not message:
-            continue
-        str_datetime = datetime.datetime.now().strftime("%d %m %Y %H:%M:%S")
-        message = f'[{str_datetime}] {message}'
-        messages_queue.put_nowait(message)
-        history_queue.put_nowait(message)
+async def read_msgs(args, watchdog_queue, messages_queue, history_queue, status_updates_queue):
+    state_enum = gui.ReadConnectionStateChanged
+    async with open_connection(args.host, args.read_port, status_updates_queue, state_enum) as connection:
+        while True:
+            message = await readline(connection.reader, watchdog_queue, 'New message in chat')
+            if not message:
+                continue
+            str_datetime = datetime.datetime.now().strftime("%d %m %Y %H:%M:%S")
+            message = f'[{str_datetime}] {message}'
+            messages_queue.put_nowait(message)
+            history_queue.put_nowait(message)
 
 
 async def save_msgs(filepath, history_queue):
@@ -181,4 +183,7 @@ if __name__ == '__main__':
     parser.add('--token', help='Персональный hash токен для авторизации', env_var='MINECHAT_TOKEN')
     args = parser.parse_args()
     logging.basicConfig(level=logging.DEBUG)
-    asyncio.run(main(args))
+    if args.host and args.send_port and args.read_port:
+        asyncio.run(main(args))
+    else:
+        messagebox.showerror("Ошибка", "Не заданы параметры подлючения")

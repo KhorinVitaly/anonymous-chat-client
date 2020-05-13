@@ -44,7 +44,7 @@ python get_token.py
 python listen_minechat.py --host minechat.dvmn.org --read_port 5000 --history ./chat_hystory.log
 ```
 
-Альтернативной является установка переменных окружения:
+Альтернативой является установка переменных окружения:
 
 ```env
 MINECHAT_HOST
@@ -69,7 +69,7 @@ export MINECHAT_HOST=minechat.dvmn.org && export MINECHAT_SEND_PORT=5000
 python get_token.py --host minechat.dvmn.org --send_port 5050
 ```
 
-Альтернативной также явдяется установка соответствующих переменных окружения:
+Альтернативой также является установка соответствующих переменных окружения:
 
 ```env
 MINECHAT_HOST
@@ -92,4 +92,4 @@ MINECHAT_TOKEN=5fvg.........
 
 ## Цели проекта
 
-Код написан в учебных целях — это урок в курсе по aсинхронному программированию на Python на сайте [Devman](https://dvmn.org)..
+Код написан в учебных целях — это урок в курсе по aсинхронному программированию на Python на сайте [Devman](https://dvmn.org).

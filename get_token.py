@@ -3,22 +3,25 @@ import configargparse
 import json
 import asyncio
 from chat_client import open_connection, submit_message, readline
+from dotenv import load_dotenv
 
 
 async def get_token(token_label, args, username):
-    connection = await open_connection(args.host, args.send_port)
-    await submit_message(connection.writer)
-    text = await readline(connection.reader)
-    await submit_message(connection.writer)
-    text = await readline(connection.reader)
-    await submit_message(connection.writer, username)
-    text = await readline(connection.reader)
     try:
+        async with open_connection(args.host, args.send_port) as connection:
+            await submit_message(connection.writer)
+            text = await readline(connection.reader)
+            await submit_message(connection.writer)
+            text = await readline(connection.reader)
+            await submit_message(connection.writer, username)
+            text = await readline(connection.reader)
         json_data = json.loads(text)
         token = json_data['account_hash']
         token_label['text'] = f'Ваш персональный токен: {token}'
     except ValueError:
         token_label['text'] = 'Что-то пошло не так попробуйте еще раз позже.'
+    except ConnectionError:
+        token_label['text'] = 'Не удалось подключиться к серверу.'
 
 
 def draw(args):
@@ -54,8 +57,12 @@ def register(name_entry, token_label, args):
 
 
 if __name__ == '__main__':
+    load_dotenv()
     parser = configargparse.ArgParser()
     parser.add('--host', help='Адрес сервера minechat', env_var='MINECHAT_HOST')
     parser.add('--send_port', help='Порт для отправки сообщений', env_var='MINECHAT_SEND_PORT')
     args = parser.parse_args()
-    draw(args)
+    if args.host and args.send_port:
+        draw(args)
+    else:
+        tkinter.messagebox.showerror("Ошибка", "Не заданы параметры подлючения")
